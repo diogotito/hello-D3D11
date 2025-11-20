@@ -1,6 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <d3d11.h>
+#include <d3dcompiler.h>
+
+constexpr int WIDTH = 600;
+constexpr int HEIGHT = 300;
 
 void DebugLastError() {
 	DWORD errorCode = GetLastError();
@@ -23,6 +27,7 @@ LRESULT CALLBACK WinProc(HWND hWin, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 		{
 			switch (wParam)
 			{
+			case VK_ESCAPE: // Escape key
 			case 0x51: // Q key
 				{
 					DestroyWindow(hWin);
@@ -68,7 +73,7 @@ int WINAPI wWinMain(
 		wndclassname,
 		L"My first window",
 		WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-		CW_USEDEFAULT, CW_USEDEFAULT, 600, 300,
+		CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT,
 		nullptr,
 		nullptr,
 		hInstance,
@@ -100,7 +105,7 @@ int WINAPI wWinMain(
 
 	DXGI_SWAP_CHAIN_DESC swapChainDesc = {
 		.BufferDesc = {
-			.Width = 600, .Height = 300,                    // Dimensions and pixel format
+			.Width = WIDTH, .Height = HEIGHT,                    // Dimensions and pixel format
 			.Format = DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM,
 		},
 		.SampleDesc = { .Count = 1, .Quality = 0 },         // No anti-aliasing
@@ -150,12 +155,80 @@ int WINAPI wWinMain(
 	// TODO Stencil buffer
 	// https://learn.microsoft.com/en-us/windows/win32/direct3dgetstarted/work-with-dxgi#create-a-render-target-for-drawing
 
+	ID3D11Texture2D * depthStencilBuffer = nullptr;
+	ID3D11DepthStencilView* depthStencilView = nullptr;
+
+	CD3D11_TEXTURE2D_DESC depthDesc{
+		DXGI_FORMAT_D24_UNORM_S8_UINT,
+		WIDTH, HEIGHT,
+		1, // One texture
+		1, // One mipmap level
+		D3D11_BIND_DEPTH_STENCIL
+	};
+
+	hr = device->CreateTexture2D(
+		&depthDesc,
+		/* pInitialData */ nullptr,
+		&depthStencilBuffer
+	);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"\n !! Failed to create depth stencil buffer!\n");
+		return hr;
+	}
+
+	CD3D11_DEPTH_STENCIL_VIEW_DESC depthStencilViewDesc(D3D11_DSV_DIMENSION_TEXTURE2D);
+
+	hr = device->CreateDepthStencilView(
+		depthStencilBuffer,
+		&depthStencilViewDesc,
+		&depthStencilView
+	);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"\n !! Failed to create depth stencil view!\n");
+		return hr;
+	}
+
+	// Create a simple triangle mesh
+
+	ID3D11Buffer* vertexBuffer = nullptr;
+
+	float triangleVertices[] = {
+		0.0f,  0.5f, 0.0f, 1.0f,
+		0.5f, -0.5f, 0.0f, 1.0f,
+	   -0.5f, -0.5f, 0.0f, 1.0f,
+	};
+
+	CD3D11_BUFFER_DESC vertexBufferDesc{ sizeof(triangleVertices), D3D11_BIND_VERTEX_BUFFER };
+	D3D11_SUBRESOURCE_DATA initData = { .pSysMem = triangleVertices };
+	hr = device->CreateBuffer(&vertexBufferDesc, &initData, &vertexBuffer);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"\n !! Failed to create vertex buffer!\n");
+		return hr;
+	}
+
+
+	// TODO The shader
+	static const char hlsl[] = R"(
+struct VSIN {
+	float3 point : POSITION;
+}
+
+	)";
+
+
+	// TODO Create vertex buffer, shaders, input layout, etc.
+
+
+
 	// Viewport
 
 	D3D11_VIEWPORT viewports[] = {
 		{
 			.TopLeftX = 0, .TopLeftY = 0,
-			.Width = 600, .Height = 300,
+			.Width = WIDTH, .Height = HEIGHT,
 			.MinDepth = 0.0f, .MaxDepth = 1.0f
 		},
 	};
@@ -184,6 +257,7 @@ int WINAPI wWinMain(
 			// Render!
 			static const float clearColor[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
 			context->ClearRenderTargetView(renderTargetView, clearColor);
+			context->ClearDepthStencilView(depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
 			swapChain->Present(1 /* sync. at least 1 vblank */, 0);
 		}
