@@ -1,7 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <d3d11.h>
-#include <d3dcompiler.h>
+//#include <d3dcompiler.h>
+//#include "ReadData.h"
+#include "VertexShader.h"
+#include "PixelShader.h"
 
 constexpr int WIDTH = 600;
 constexpr int HEIGHT = 300;
@@ -152,7 +155,7 @@ int WINAPI wWinMain(
 
 	OutputDebugString(L"  -- Got back buffer and render target view!\n");
 
-	// TODO Stencil buffer
+	// Stencil buffer
 	// https://learn.microsoft.com/en-us/windows/win32/direct3dgetstarted/work-with-dxgi#create-a-render-target-for-drawing
 
 	ID3D11Texture2D * depthStencilBuffer = nullptr;
@@ -209,19 +212,43 @@ int WINAPI wWinMain(
 		return hr;
 	}
 
+	ID3D11InputLayout* inputLayout;
+	D3D11_INPUT_ELEMENT_DESC inputLayoutElems[] = {
+		{
+			.SemanticName = "POSITION", .SemanticIndex = 0,
+			.Format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT,
+			.InputSlot = 0,
+			.AlignedByteOffset = 0, // D3D11_APPEND_ALIGNED_ELEMENT for the following ones
+			.InputSlotClass = D3D11_INPUT_CLASSIFICATION::D3D11_INPUT_PER_VERTEX_DATA,
+			.InstanceDataStepRate = 0,
+		},
+	};
+	hr = device->CreateInputLayout(
+		inputLayoutElems, ARRAYSIZE(inputLayoutElems),
+		COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA),
+		&inputLayout
+	);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"\n !! Failed to CreateInputLayout(...)!\n");
+	}
 
-	// TODO The shader
-	static const char hlsl[] = R"(
-struct VSIN {
-	float3 point : POSITION;
-}
+	// The shaders
+	ID3D11VertexShader *vertexShader;
+	hr = device->CreateVertexShader(COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA), nullptr, &vertexShader);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"\n !! Failed to create vertex shader!\n");
+		return hr;
+	}
 
-	)";
-
-
-	// TODO Create vertex buffer, shaders, input layout, etc.
-
-
+	ID3D11PixelShader *pixelShader;
+	hr = device->CreatePixelShader(COMPILED_PixelShader_DATA, sizeof(COMPILED_PixelShader_DATA), nullptr, &pixelShader);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"\n !! Failed to create pixel shader!\n");
+		return hr;
+	}
 
 	// Viewport
 
@@ -270,6 +297,12 @@ struct VSIN {
 #pragma region Cleanup
 	OutputDebugString(L"  .. Cleaning up...\n");
 
+	vertexShader->Release();
+	pixelShader->Release();
+	inputLayout->Release();
+	vertexBuffer->Release();
+	depthStencilView->Release();
+	depthStencilBuffer->Release();
 	backBuffer->Release();
 	renderTargetView->Release();
 	context->Release();
