@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <wrl/client.h>
 #include <d3d11.h>
 //#include <d3dcompiler.h>
 //#include "ReadData.h"
@@ -282,10 +283,22 @@ int WINAPI wWinMain(
 		else
 		{
 			// Render!
-			static const float clearColor[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
+			const float clearColor[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
 			context->ClearRenderTargetView(renderTargetView, clearColor);
 			context->ClearDepthStencilView(depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
+			context->OMSetRenderTargets(1, &renderTargetView, depthStencilView);
+
+			const UINT stride = sizeof(float[4]);
+			const UINT offset = 0;
+			context->IASetInputLayout(inputLayout);
+			context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+
+			context->VSSetShader(vertexShader, /* don't use any class instances */nullptr, 0);
+			context->PSSetShader(pixelShader,  /* don't use any class instances */nullptr, 0);
+
+			context->Draw(/* Three vertices */ 3, 0);
 			swapChain->Present(1 /* sync. at least 1 vblank */, 0);
 		}
 	}
