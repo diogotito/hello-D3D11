@@ -10,8 +10,12 @@
 
 using Microsoft::WRL::ComPtr;
 
+// Constants --------------------------------------------------------------------------------------------------------------------------------------------
+
 constexpr int WIDTH = 600;
 constexpr int HEIGHT = 300;
+
+// Helpers ----------------------------------------------------------------------------------------------------------------------------------------------
 
 void DebugLastError() {
 	DWORD errorCode = GetLastError();
@@ -26,6 +30,28 @@ void DebugLastError() {
 	LocalFree(lpMsgBuf);
 	DebugBreak();
 }
+
+#define ASSERT_SUCCEEDED(hr, what) \
+do { \
+	if (FAILED(hr)) \
+	{ \
+		OutputDebugString(L"\n !! Failed to " what L"\n\n"); \
+		return hr; \
+	} \
+} while(0)
+
+// A helper for grabbing a memory address for structs written in-line,
+// to pass "keyword args structs" to those C-compatible DirectX functions that must receive pointers.
+// https://stackoverflow.com/a/47460052
+// Alternatively:
+//   - Abuse the C++20 std::data() overload with std::initializer_list, like so:
+//     std::data({ STRUCT_TYPENAME { ... } })
+//   - template<typename T> T* as_ptr(const T&& t) { return &t; }
+template<typename T>
+T& as_lvalue(T&& t) { return t; }
+// I like trains.
+
+// Window procedure -------------------------------------------------------------------------------------------------------------------------------------
 
 LRESULT CALLBACK WinProc(HWND hWin, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	switch (uMsg)
@@ -48,6 +74,8 @@ LRESULT CALLBACK WinProc(HWND hWin, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	}
 	return DefWindowProcW(hWin, uMsg, wParam, lParam);
 }
+
+// Entry point ------------------------------------------------------------------------------------------------------------------------------------------
 
 int WINAPI wWinMain(
 	_In_ HINSTANCE hInstance,
@@ -102,103 +130,93 @@ int WINAPI wWinMain(
 #pragma region Direct3D 11 initialization
 	OutputDebugString(L"  .. Now on to D3D stuff...\n");
 
-	HRESULT hr;
-
-	// Create the device, device context and swap chain ---------------------------------------------------------------------------------------------
+	// Create the device, device context and swap chain -------------------------------------------------------------------------------------------------
 
 	ComPtr<ID3D11Device> device;
 	ComPtr<ID3D11DeviceContext> context;
 	ComPtr<IDXGISwapChain> swapChain;
 
-	hr = D3D11CreateDeviceAndSwapChain(
-		nullptr,                              // Use the first adapter enumerated by IDXGIFactory1::EnumAdapters
-		D3D_DRIVER_TYPE_HARDWARE, nullptr,    // Use the GPU; So, don't specify a software rasterizer
-		D3D11_CREATE_DEVICE_DEBUG | D3D11_CREATE_DEVICE_BGRA_SUPPORT, // I want Debug Layer
-		nullptr, 0,                           // I like the default D3D_FEATURE_LEVELS (9.1 through 11.0); So, I'm not passing an array
-		D3D11_SDK_VERSION,                    // We always pass D3D11_SDK_VERSION here
-		std::data({ DXGI_SWAP_CHAIN_DESC {
-			.BufferDesc = {
-				.Width = WIDTH, .Height = HEIGHT,                          // Dimensions and pixel format
-				.Format = DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM,
-			},
-			.SampleDesc = {.Count = 1, .Quality = 0 },                     // No anti-aliasing
-			.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,                // The buffer in this will receive the pixels from the graphics pipeline
-			.BufferCount = 2,                                              // Double buffering
-			.OutputWindow = hWnd, .Windowed = true,                        // Render to our window
-			.SwapEffect = DXGI_SWAP_EFFECT::DXGI_SWAP_EFFECT_FLIP_DISCARD, // or _FLIP_SEQUENTIAL
-		} }),
-		// --- Outputs ---
-		&swapChain,
-		&device,
-		nullptr,     // pFeatureLevel
-		&context
-	);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to D3D11CreateDeviceAndSwapChain()\n\n");
-		return hr;
-	}
+	UINT device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT; // We need a BGRA render target (TODO why?)
+#if defined(DEBUG) || defined(_DEBUG)
+	device_flags |= D3D11_CREATE_DEVICE_DEBUG; // Extra debugging stuff for debug builds
+#endif
 
+	ASSERT_SUCCEEDED(
+		D3D11CreateDeviceAndSwapChain(
+			// --- Device config ---
+			nullptr,                              // Use the first adapter enumerated by IDXGIFactory1::EnumAdapters
+			D3D_DRIVER_TYPE_HARDWARE, nullptr,    // Use the GPU; So, don't specify a software rasterizer
+			device_flags,
+			nullptr, 0,                           // I like the default D3D_FEATURE_LEVELS (9.1 through 11.0); So, I'm not passing an array
+			D3D11_SDK_VERSION,                    // We always pass D3D11_SDK_VERSION here
+			// --- Swapchain desc ---
+			&as_lvalue(DXGI_SWAP_CHAIN_DESC{
+				.BufferDesc = {
+					.Width = WIDTH, .Height = HEIGHT,                          // Dimensions and pixel format
+					.Format = DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM,
+				},
+				.SampleDesc = {.Count = 1, .Quality = 0 },                     // No anti-aliasing
+				.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,                // The buffer in this will receive the pixels from the graphics pipeline
+				.BufferCount = 2,                                              // Double buffering
+				.OutputWindow = hWnd, .Windowed = true,                        // Render to our window
+				.SwapEffect = DXGI_SWAP_EFFECT::DXGI_SWAP_EFFECT_FLIP_DISCARD, // or _FLIP_SEQUENTIAL
+				}),
+			// --- Outputs ---
+			&swapChain,
+			&device,
+			nullptr,     // pFeatureLevel
+			&context
+		),
+		L"D3D11CreateDeviceAndSwapChain(...)"
+	);
 	OutputDebugString(L"  -- Got swapChain, device and context!\n");
 
-	// Get the back buffer from swap chain ----------------------------------------------------------------------------------------------------------
+	// Get the back buffer from swap chain --------------------------------------------------------------------------------------------------------------
 
 	ComPtr<ID3D11Texture2D> backBuffer;
+	ASSERT_SUCCEEDED(
+		swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer)),
+		L"GetBuffer(0, ...) (the back buffer) from swapChain"
+	);
+
 	ComPtr<ID3D11RenderTargetView> renderTargetView;
-
-	hr = swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to GetBuffer(0, ...) (the back buffer) from swapChain\n\n");
-		return hr;
-	}
-
-	hr = device->CreateRenderTargetView(backBuffer.Get(), /* pDesc */ nullptr, &renderTargetView);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to device->CreateRenderTargetView(backBuffer, ...)\n\n");
-		return hr;
-	}
+	ASSERT_SUCCEEDED(
+		device->CreateRenderTargetView(backBuffer.Get(), /* pDesc */ nullptr, &renderTargetView),
+		L"device->CreateRenderTargetView(backBuffer, ...)"
+	);
 
 	OutputDebugString(L"  -- Got back buffer and render target view!\n");
 
-	// Stencil buffer -------------------------------------------------------------------------------------------------------------------------------
+	// Stencil buffer -----------------------------------------------------------------------------------------------------------------------------------
 	// https://learn.microsoft.com/en-us/windows/win32/direct3dgetstarted/work-with-dxgi#create-a-render-target-for-drawing
 
 	ComPtr<ID3D11Texture2D> depthStencilBuffer;
+	ASSERT_SUCCEEDED(
+		device->CreateTexture2D(
+			&as_lvalue(CD3D11_TEXTURE2D_DESC {
+				DXGI_FORMAT_D24_UNORM_S8_UINT,
+				WIDTH, HEIGHT,
+				1, // One texture
+				1, // One mipmap level
+				D3D11_BIND_DEPTH_STENCIL
+			}),
+			/* pInitialData */ nullptr,
+			&depthStencilBuffer
+		),
+		L"create depth stencil buffer"
+	);
+
 	ComPtr<ID3D11DepthStencilView> depthStencilView;
-
-	hr = device->CreateTexture2D(
-		std::data({ CD3D11_TEXTURE2D_DESC {
-			DXGI_FORMAT_D24_UNORM_S8_UINT,
-			WIDTH, HEIGHT,
-			1, // One texture
-			1, // One mipmap level
-			D3D11_BIND_DEPTH_STENCIL
-		}}),
-		/* pInitialData */ nullptr,
-		&depthStencilBuffer
+	ASSERT_SUCCEEDED(
+		device->CreateDepthStencilView(
+			depthStencilBuffer.Get(),
+			&as_lvalue(CD3D11_DEPTH_STENCIL_VIEW_DESC { D3D11_DSV_DIMENSION_TEXTURE2D }),
+			&depthStencilView
+		),
+		L"create depth stencil view"
 	);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to create depth stencil buffer!\n");
-		return hr;
-	}
 
-	hr = device->CreateDepthStencilView(
-		depthStencilBuffer.Get(),
-		std::data({ CD3D11_DEPTH_STENCIL_VIEW_DESC { D3D11_DSV_DIMENSION_TEXTURE2D } }),
-		&depthStencilView
-	);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to create depth stencil view!\n");
-		return hr;
-	}
-
-	// Create a simple triangle mesh ----------------------------------------------------------------------------------------------------------------
-
-	ComPtr<ID3D11Buffer> vertexBuffer = nullptr;
+	// Create a simple triangle mesh --------------------------------------------------------------------------------------------------------------------
 
 	float triangleVertices[] = {
 		0.0f,  0.5f, 0.0f, 1.0f,
@@ -206,18 +224,16 @@ int WINAPI wWinMain(
 	   -0.5f, -0.5f, 0.0f, 1.0f,
 	};
 
-	hr = device->CreateBuffer(
-		std::data({ CD3D11_BUFFER_DESC { sizeof(triangleVertices), D3D11_BIND_VERTEX_BUFFER } }),
-		std::data({ D3D11_SUBRESOURCE_DATA { .pSysMem = triangleVertices } }),
-		&vertexBuffer
+	ComPtr<ID3D11Buffer> vertexBuffer = nullptr;
+	ASSERT_SUCCEEDED(
+		device->CreateBuffer(
+			&as_lvalue(CD3D11_BUFFER_DESC      { sizeof(triangleVertices), D3D11_BIND_VERTEX_BUFFER }),
+			&as_lvalue( D3D11_SUBRESOURCE_DATA { .pSysMem = triangleVertices }),
+			&vertexBuffer
+		),
+		L"create vertex buffer"
 	);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to create vertex buffer!\n");
-		return hr;
-	}
 
-	ComPtr<ID3D11InputLayout> inputLayout;
 	D3D11_INPUT_ELEMENT_DESC inputLayoutElems[] = {
 		{
 			.SemanticName = "POSITION", .SemanticIndex = 0,
@@ -228,32 +244,29 @@ int WINAPI wWinMain(
 			.InstanceDataStepRate = 0,
 		},
 	};
-	hr = device->CreateInputLayout(
-		inputLayoutElems, std::size(inputLayoutElems),
-		COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA),
-		&inputLayout
+
+	ComPtr<ID3D11InputLayout> inputLayout;
+	ASSERT_SUCCEEDED(
+		device->CreateInputLayout(
+			inputLayoutElems, std::size(inputLayoutElems),
+			COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA),
+			&inputLayout
+		),
+		L"CreateInputLayout(...)"
 	);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to CreateInputLayout(...)!\n");
-	}
 
 	// The shaders
 	ComPtr<ID3D11VertexShader> vertexShader;
-	hr = device->CreateVertexShader(COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA), nullptr, &vertexShader);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to create vertex shader!\n");
-		return hr;
-	}
+	ASSERT_SUCCEEDED(
+		device->CreateVertexShader(COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA), nullptr, &vertexShader),
+		L"create vertex shader"
+	);
 
 	ComPtr<ID3D11PixelShader> pixelShader;
-	hr = device->CreatePixelShader(COMPILED_PixelShader_DATA, sizeof(COMPILED_PixelShader_DATA), nullptr, &pixelShader);
-	if (FAILED(hr))
-	{
-		OutputDebugString(L"\n !! Failed to create pixel shader!\n");
-		return hr;
-	}
+	ASSERT_SUCCEEDED(
+		device->CreatePixelShader(COMPILED_PixelShader_DATA, sizeof(COMPILED_PixelShader_DATA), nullptr, &pixelShader),
+		L"create pixel shader"
+	);
 
 	// Viewport
 
