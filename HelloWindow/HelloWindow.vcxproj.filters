@@ -27,5 +27,8 @@
     <ClInclude Include="ReadData.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="scratch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

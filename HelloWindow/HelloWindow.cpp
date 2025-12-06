@@ -1,4 +1,7 @@
 #include <array>
+#include <utility>
+#include <string>
+#include <string_view>
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <wrl/client.h>
@@ -8,6 +11,7 @@
 #include "VertexShader.h"
 #include "PixelShader.h"
 
+using namespace std::literals;
 using Microsoft::WRL::ComPtr;
 
 // Constants --------------------------------------------------------------------------------------------------------------------------------------------
@@ -17,6 +21,7 @@ constexpr int HEIGHT = 300;
 
 // Helpers ----------------------------------------------------------------------------------------------------------------------------------------------
 
+// For win32-style errors
 void DebugLastError() {
 	DWORD errorCode = GetLastError();
 	LPVOID lpMsgBuf = nullptr;
@@ -31,6 +36,7 @@ void DebugLastError() {
 	DebugBreak();
 }
 
+// For checking returned HRESULTs from calls to DirectX, logging <what> if FAILED
 #define ASSERT_SUCCEEDED(hr, what) \
 do { \
 	if (FAILED(hr)) \
@@ -40,16 +46,11 @@ do { \
 	} \
 } while(0)
 
-// A helper for grabbing a memory address for structs written in-line,
-// to pass "keyword args structs" to those C-compatible DirectX functions that must receive pointers.
+// A helper for passing "kwargs" more conveniently to many DirectX functions
+// that receive C-style pointers to structs.
 // https://stackoverflow.com/a/47460052
-// Alternatively:
-//   - Abuse the C++20 std::data() overload with std::initializer_list, like so:
-//     std::data({ STRUCT_TYPENAME { ... } })
-//   - template<typename T> T* as_ptr(const T&& t) { return &t; }
-template<typename T>
-T& as_lvalue(T&& t) { return t; }
-// I like trains.
+template<typename T> T& as_lvalue(T&& t) { return t; }
+// (i like trains.)n
 
 // Window procedure -------------------------------------------------------------------------------------------------------------------------------------
 
@@ -87,6 +88,7 @@ int WINAPI wWinMain(
 #pragma region Window creation
 	OutputDebugStringW(L"\n================\nHello, debugger!\n================\n");
 
+	const auto WNDCLASSNAME = L"HelloWindow"sv;
 	const wchar_t* wndclassname = L"HelloWindow";
 	WNDCLASSW wndclass = { 0 };
 	wndclass.lpfnWndProc = WinProc;
@@ -150,7 +152,7 @@ int WINAPI wWinMain(
 			nullptr, 0,                           // I like the default D3D_FEATURE_LEVELS (9.1 through 11.0); So, I'm not passing an array
 			D3D11_SDK_VERSION,                    // We always pass D3D11_SDK_VERSION here
 			// --- Swapchain desc ---
-			&as_lvalue(DXGI_SWAP_CHAIN_DESC{
+			&as_lvalue(DXGI_SWAP_CHAIN_DESC {
 				.BufferDesc = {
 					.Width = WIDTH, .Height = HEIGHT,                          // Dimensions and pixel format
 					.Format = DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -160,7 +162,7 @@ int WINAPI wWinMain(
 				.BufferCount = 2,                                              // Double buffering
 				.OutputWindow = hWnd, .Windowed = true,                        // Render to our window
 				.SwapEffect = DXGI_SWAP_EFFECT::DXGI_SWAP_EFFECT_FLIP_DISCARD, // or _FLIP_SEQUENTIAL
-				}),
+			}),
 			// --- Outputs ---
 			&swapChain,
 			&device,
@@ -200,7 +202,7 @@ int WINAPI wWinMain(
 				1, // One mipmap level
 				D3D11_BIND_DEPTH_STENCIL
 			}),
-			/* pInitialData */ nullptr,
+			/* pInitialData (in, opt) */ nullptr,
 			&depthStencilBuffer
 		),
 		L"create depth stencil buffer"
@@ -218,17 +220,42 @@ int WINAPI wWinMain(
 
 	// Create a simple triangle mesh --------------------------------------------------------------------------------------------------------------------
 
-	float triangleVertices[] = {
-		0.0f,  0.5f, 0.0f, 1.0f,
-		0.5f, -0.5f, 0.0f, 1.0f,
-	   -0.5f, -0.5f, 0.0f, 1.0f,
+	//float triangleVertices[] = {
+	//	0.0f,  0.5f, 0.0f, 1.0f,
+	//	0.5f, -0.5f, 0.0f, 1.0f,
+	//   -0.5f,-0.5f, 0.0f, 1.0f,
+	//};
+
+	struct VertPos {
+		float x, y;
+		float z = 0.0f;
+		float w = 1.0f; // Uniform/homogenized (TODO how is it called) coordinates by default
 	};
+
+	struct Triangle {
+		VertPos vertexes[3];
+	};
+
+	Triangle triangles[] = {
+		Triangle {.vertexes = { { -0.9f,   0.9f },
+								{  0.85f,  0.9f },
+								{ -0.9f,  -0.85f } } },
+		Triangle {.vertexes = { {  0.9f,  0.85f },
+								{  0.9f,  -0.9f },
+								{ -0.85f,  -0.9f } } },
+	};
+	OutputDebugString(L"\n\n  >>>>>>>>> size(triangles) = ");
+	OutputDebugString(std::to_wstring(std::size(triangles)).c_str());
+	OutputDebugString(L"\n\n");
+
+	const UINT triangles_stride = sizeof(VertPos);
+	const UINT triangles_offset = 0;
 
 	ComPtr<ID3D11Buffer> vertexBuffer = nullptr;
 	ASSERT_SUCCEEDED(
 		device->CreateBuffer(
-			&as_lvalue(CD3D11_BUFFER_DESC      { sizeof(triangleVertices), D3D11_BIND_VERTEX_BUFFER }),
-			&as_lvalue( D3D11_SUBRESOURCE_DATA { .pSysMem = triangleVertices }),
+			&as_lvalue(CD3D11_BUFFER_DESC { sizeof(triangles), D3D11_BIND_VERTEX_BUFFER }),
+			&as_lvalue(D3D11_SUBRESOURCE_DATA { .pSysMem = triangles }),
 			&vertexBuffer
 		),
 		L"create vertex buffer"
@@ -307,16 +334,14 @@ int WINAPI wWinMain(
 			ID3D11RenderTargetView *const renderTargetViews[] = { renderTargetView.Get() }; // or .GetAddressOf()
 			context->OMSetRenderTargets(1, renderTargetViews, depthStencilView.Get());
 
-			const UINT stride = sizeof(float[4]);
-			const UINT offset = 0;
 			context->IASetInputLayout(inputLayout.Get());
 			context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			context->IASetVertexBuffers(0, 1, vertexBuffer.GetAddressOf(), &stride, &offset);
+			context->IASetVertexBuffers(0, 1, vertexBuffer.GetAddressOf(), &triangles_stride, &triangles_offset);
 
 			context->VSSetShader(vertexShader.Get(), /* don't use any class instances */nullptr, 0);
 			context->PSSetShader(pixelShader.Get(),  /* don't use any class instances */nullptr, 0);
 
-			context->Draw(/* Three vertices */ 3, 0);
+			context->Draw(/* Three vertices per triangle */ 3 * std::size(triangles), 0);
 			swapChain->Present(1 /* sync. at least 1 vblank */, 0);
 		}
 	}
