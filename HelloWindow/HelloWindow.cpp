@@ -2,10 +2,14 @@
 #include <utility>
 #include <string>
 #include <string_view>
+#include <sstream>
+#include <iomanip>
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <profileapi.h>
 #include <wrl/client.h>
 #include <d3d11.h>
+#include <stdint.h>
 //#include <d3dcompiler.h>
 //#include "ReadData.h"
 #include "VertexShader.h"
@@ -51,6 +55,27 @@ do { \
 // https://stackoverflow.com/a/47460052
 template<typename T> T& as_lvalue(T&& t) { return t; }
 // (i like trains.)n
+
+// Counter ----------------------------------------------------------------------------------------------------------------------------------------------
+
+double gCurrentTime = {};
+
+static double Counter() {
+	static LARGE_INTEGER frequency = {};
+	if (frequency.QuadPart == 0)
+	{
+		if (!QueryPerformanceFrequency(&frequency))
+		{
+			DebugLastError();
+		}
+	}
+	static LARGE_INTEGER count = {};
+	if (!QueryPerformanceCounter(&count))
+	{
+		DebugLastError();
+	}
+	return static_cast<double>(count.QuadPart) / static_cast<double>(frequency.QuadPart);
+}
 
 // Window procedure -------------------------------------------------------------------------------------------------------------------------------------
 
@@ -307,6 +332,8 @@ int WINAPI wWinMain(
 	context->RSSetViewports(std::size(viewports), viewports);
 #pragma endregion
 
+	double startTime = Counter();
+
 #pragma region Message loop
 	OutputDebugString(L"  .. On to the message loop...\n");
 
@@ -326,6 +353,15 @@ int WINAPI wWinMain(
 		}
 		else
 		{
+			double deltaTime;
+			{
+				double previousTime = gCurrentTime;
+				gCurrentTime = Counter() - startTime;
+				deltaTime = gCurrentTime - previousTime;
+
+				OutputDebugString((std::wstringstream{} << std::setprecision(3)
+														<< L"  -- FPS: " << (1.0 / deltaTime) << L"\n").str().c_str());
+			}
 			// Render!
 			const float clearColor[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
 			context->ClearRenderTargetView(renderTargetView.Get(), clearColor);
