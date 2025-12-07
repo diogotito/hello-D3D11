@@ -1,16 +1,21 @@
+// C/C++
 #include <array>
 #include <utility>
 #include <string>
 #include <string_view>
 #include <sstream>
 #include <iomanip>
+#include <format>
+#include <stdint.h>
+// Windows API
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <profileapi.h>
 #include <wrl/client.h>
+// Direct3D 11
 #include <d3d11.h>
-#include <stdint.h>
 //#include <d3dcompiler.h>
+// My includes
 //#include "ReadData.h"
 #include "VertexShader.h"
 #include "PixelShader.h"
@@ -22,8 +27,17 @@ using Microsoft::WRL::ComPtr;
 
 constexpr int WIDTH = 600;
 constexpr int HEIGHT = 300;
+constexpr std::wstring_view WINDOW_TITLE = L"My second win32 window: Hello, Direct3D 11!"sv;
 
 // Helpers ----------------------------------------------------------------------------------------------------------------------------------------------
+
+// OutputDebugString is too hard to remember
+#define LOG(...) \
+do { \
+	OutputDebugString(L"  -- "); \
+	OutputDebugString(std::format(__VA_ARGS__).c_str()); \
+	OutputDebugString(L"\n"); \
+} while(0)
 
 // For win32-style errors
 void DebugLastError() {
@@ -58,23 +72,28 @@ template<typename T> T& as_lvalue(T&& t) { return t; }
 
 // Counter ----------------------------------------------------------------------------------------------------------------------------------------------
 
-double gCurrentTime = {};
+using TimeInSeconds = double;
+TimeInSeconds gCurrentTime = {};
 
-static double Counter() {
-	static LARGE_INTEGER frequency = {};
-	if (frequency.QuadPart == 0)
+static TimeInSeconds Counter() {
+	static LARGE_INTEGER perfFreq = {};
+	if (perfFreq.QuadPart == 0)
 	{
-		if (!QueryPerformanceFrequency(&frequency))
+		if (!QueryPerformanceFrequency(&perfFreq))
 		{
 			DebugLastError();
 		}
 	}
-	static LARGE_INTEGER count = {};
-	if (!QueryPerformanceCounter(&count))
+
+	static LARGE_INTEGER perfCount = {};
+	if (!QueryPerformanceCounter(&perfCount))
 	{
 		DebugLastError();
 	}
-	return static_cast<double>(count.QuadPart) / static_cast<double>(frequency.QuadPart);
+
+	auto dCounter = static_cast<TimeInSeconds>(perfCount.QuadPart),
+		dFrequency = static_cast<TimeInSeconds>(perfFreq.QuadPart);
+	return dCounter / dFrequency;
 }
 
 // Window procedure -------------------------------------------------------------------------------------------------------------------------------------
@@ -133,7 +152,7 @@ int WINAPI wWinMain(
 	HWND hWnd = CreateWindowExW(
 		WS_EX_APPWINDOW,
 		wndclassname,
-		L"My first window",
+		WINDOW_TITLE.data(),
 		WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 		CW_USEDEFAULT, CW_USEDEFAULT, WIDTH, HEIGHT,
 		nullptr,
@@ -155,7 +174,7 @@ int WINAPI wWinMain(
 
 
 #pragma region Direct3D 11 initialization
-	OutputDebugString(L"  .. Now on to D3D stuff...\n");
+	LOG(L"Now on to D3D stuff...");
 
 	// Create the device, device context and swap chain -------------------------------------------------------------------------------------------------
 
@@ -196,7 +215,7 @@ int WINAPI wWinMain(
 		),
 		L"D3D11CreateDeviceAndSwapChain(...)"
 	);
-	OutputDebugString(L"  -- Got swapChain, device and context!\n");
+	LOG(L"Got swapChain, device and context!");
 
 	// Get the back buffer from swap chain --------------------------------------------------------------------------------------------------------------
 
@@ -212,7 +231,7 @@ int WINAPI wWinMain(
 		L"device->CreateRenderTargetView(backBuffer, ...)"
 	);
 
-	OutputDebugString(L"  -- Got back buffer and render target view!\n");
+	LOG(L"Got back buffer and render target view!");
 
 	// Stencil buffer -----------------------------------------------------------------------------------------------------------------------------------
 	// https://learn.microsoft.com/en-us/windows/win32/direct3dgetstarted/work-with-dxgi#create-a-render-target-for-drawing
@@ -269,9 +288,9 @@ int WINAPI wWinMain(
 								{  0.9f,  -0.9f },
 								{ -0.85f,  -0.9f } } },
 	};
-	OutputDebugString(L"\n\n  >>>>>>>>> size(triangles) = ");
-	OutputDebugString(std::to_wstring(std::size(triangles)).c_str());
-	OutputDebugString(L"\n\n");
+	LOG(L"triangles[]");
+	LOG(L"    >>      # = {}", std::size(triangles));
+	LOG(L"    >> sizeof = {}", sizeof(triangles));
 
 	const UINT triangles_stride = sizeof(VertPos);
 	const UINT triangles_offset = 0;
@@ -307,7 +326,18 @@ int WINAPI wWinMain(
 		L"CreateInputLayout(...)"
 	);
 
-	// The shaders
+	// Set up the constant buffers ----------------------------------------------------------------------------------------------------------------------
+
+
+
+	CD3D11_BUFFER_DESC constantBufferDesc{
+		sizeof(float) * 4, // For example, a float4
+		D3D11_BIND_CONSTANT_BUFFER,
+		D3D11_USAGE_DYNAMIC,
+		D3D11_CPU_ACCESS_WRITE
+	};
+
+	// Create the shaders -------------------------------------------------------------------------------------------------------------------------------
 	ComPtr<ID3D11VertexShader> vertexShader;
 	ASSERT_SUCCEEDED(
 		device->CreateVertexShader(COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA), nullptr, &vertexShader),
@@ -317,7 +347,7 @@ int WINAPI wWinMain(
 	ComPtr<ID3D11PixelShader> pixelShader;
 	ASSERT_SUCCEEDED(
 		device->CreatePixelShader(COMPILED_PixelShader_DATA, sizeof(COMPILED_PixelShader_DATA), nullptr, &pixelShader),
-		L"create pixel shader"
+		L"create pixelshader"
 	);
 
 	// Viewport
@@ -332,10 +362,15 @@ int WINAPI wWinMain(
 	context->RSSetViewports(std::size(viewports), viewports);
 #pragma endregion
 
+#pragma region misc "demo" logic setup
+
+	// Start counting time with Performance Counter
 	double startTime = Counter();
 
+#pragma endregion
+
 #pragma region Message loop
-	OutputDebugString(L"  .. On to the message loop...\n");
+	LOG(L"On to the message loop...");
 
 	MSG msg = { .message = WM_NULL };
 
@@ -353,16 +388,19 @@ int WINAPI wWinMain(
 		}
 		else
 		{
-			double deltaTime;
-			{
-				double previousTime = gCurrentTime;
-				gCurrentTime = Counter() - startTime;
-				deltaTime = gCurrentTime - previousTime;
+			// Update demo state ---------------------------------------------------------------------------------------------------------------------
 
-				OutputDebugString((std::wstringstream{} << std::setprecision(3)
-														<< L"  -- FPS: " << (1.0 / deltaTime) << L"\n").str().c_str());
-			}
-			// Render!
+			double deltaTime = ([=]() {
+				double previousTime = gCurrentTime;
+				gCurrentTime = Counter() - startTime; // Mutate global current time
+				return gCurrentTime - previousTime;
+			}());
+
+			// Update window title with FPS and time
+			auto newTitle = std::format(L"{}  --  FPS: {:0.1f}  |  t = {:0.3f} s\n", WINDOW_TITLE, 1.0 / deltaTime, gCurrentTime);
+			SetWindowText(hWnd, newTitle.c_str());
+
+			// Render! -------------------------------------------------------------------------------------------------------------------------------
 			const float clearColor[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
 			context->ClearRenderTargetView(renderTargetView.Get(), clearColor);
 			context->ClearDepthStencilView(depthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
@@ -382,12 +420,12 @@ int WINAPI wWinMain(
 		}
 	}
 
-	OutputDebugString(L"  -- End of message loop.\n");
+	LOG(L"End of message loop.");
 #pragma endregion
 
 
 #pragma region Cleanup
-	OutputDebugString(L"  .. Cleaning up...\n");
+	LOG(L"Cleaning up...");
 
 	UnregisterClassW(wndclassname, hInstance);
 
