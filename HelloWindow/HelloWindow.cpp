@@ -57,10 +57,11 @@ void DebugLastError() {
 // For checking returned HRESULTs from calls to DirectX, logging <what> if FAILED
 #define ASSERT_SUCCEEDED(hr, what) \
 do { \
-	if (FAILED(hr)) \
+	HRESULT _hr = hr; \
+	if (FAILED(_hr)) \
 	{ \
 		OutputDebugString(L"\n !! Failed to " what L"\n\n"); \
-		return hr; \
+		return _hr; \
 	} \
 } while(0)
 
@@ -328,16 +329,23 @@ int WINAPI wWinMain(
 
 	// Set up the constant buffers ----------------------------------------------------------------------------------------------------------------------
 
+	auto constantBufferData = std::to_array({ static_cast<float>(gCurrentTime) });
+	UINT appropriateSize = static_cast<UINT>(std::ceil(sizeof(constantBufferData) / 16.f) * 16);
+	LOG(L"constantBufferData: # = {}, sizeof = {}, appropriate size = {}", std::size(constantBufferData), sizeof(constantBufferData), appropriateSize);
 
-
-	CD3D11_BUFFER_DESC constantBufferDesc{
-		sizeof(float) * 4, // For example, a float4
-		D3D11_BIND_CONSTANT_BUFFER,
-		D3D11_USAGE_DYNAMIC,
-		D3D11_CPU_ACCESS_WRITE
-	};
+	ComPtr<ID3D11Buffer> constantBuffer;
+	ASSERT_SUCCEEDED(
+		device->CreateBuffer(
+			&as_lvalue(CD3D11_BUFFER_DESC{ appropriateSize, D3D11_BIND_CONSTANT_BUFFER, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE }),
+			&as_lvalue(D3D11_SUBRESOURCE_DATA{ .pSysMem = constantBufferData.data() }),
+			&constantBuffer
+		),
+		"create constant buffer"
+	);
+	LOG(L"Created constant buffer.");
 
 	// Create the shaders -------------------------------------------------------------------------------------------------------------------------------
+
 	ComPtr<ID3D11VertexShader> vertexShader;
 	ASSERT_SUCCEEDED(
 		device->CreateVertexShader(COMPILED_VertexShader_DATA, sizeof(COMPILED_VertexShader_DATA), nullptr, &vertexShader),
@@ -400,6 +408,17 @@ int WINAPI wWinMain(
 			auto newTitle = std::format(L"{}  --  FPS: {:0.1f}  |  t = {:0.3f} s\n", WINDOW_TITLE, 1.0 / deltaTime, gCurrentTime);
 			SetWindowText(hWnd, newTitle.c_str());
 
+			// Update constant buffer
+			decltype(constantBufferData) newConstantBufferData = { static_cast<float>(gCurrentTime) };
+			D3D11_MAPPED_SUBRESOURCE mappedConstants = {};
+			ASSERT_SUCCEEDED(
+				context->Map(constantBuffer.Get(), 0, D3D11_MAP::D3D11_MAP_WRITE_DISCARD, 0, &mappedConstants),
+				"map constant buffer for update"
+			);
+			memcpy(mappedConstants.pData, newConstantBufferData.data(), sizeof(newConstantBufferData));
+			context->Unmap(constantBuffer.Get(), 0);
+
+
 			// Render! -------------------------------------------------------------------------------------------------------------------------------
 			const float clearColor[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
 			context->ClearRenderTargetView(renderTargetView.Get(), clearColor);
@@ -413,7 +432,9 @@ int WINAPI wWinMain(
 			context->IASetVertexBuffers(0, 1, vertexBuffer.GetAddressOf(), &triangles_stride, &triangles_offset);
 
 			context->VSSetShader(vertexShader.Get(), /* don't use any class instances */nullptr, 0);
+			context->VSSetConstantBuffers(0, 1, constantBuffer.GetAddressOf());
 			context->PSSetShader(pixelShader.Get(),  /* don't use any class instances */nullptr, 0);
+			context->PSSetConstantBuffers(0, 1, constantBuffer.GetAddressOf());
 
 			context->Draw(/* Three vertices per triangle */ 3 * std::size(triangles), 0);
 			swapChain->Present(1 /* sync. at least 1 vblank */, 0);
