@@ -75,6 +75,7 @@ template<typename T> T& as_lvalue(T&& t) { return t; }
 
 using TimeInSeconds = double;
 TimeInSeconds gCurrentTime = {};
+uint64_t gFrameCount = 0;
 
 static TimeInSeconds Counter() {
 	static LARGE_INTEGER perfFreq = {};
@@ -400,13 +401,17 @@ int WINAPI wWinMain(
 
 			double deltaTime = ([=]() {
 				double previousTime = gCurrentTime;
-				gCurrentTime = Counter() - startTime; // Mutate global current time
+				gCurrentTime = Counter() - startTime;  // Mutate global current time
+				gFrameCount++;                             // Mutate global frame count
 				return gCurrentTime - previousTime;
 			}());
 
 			// Update window title with FPS and time
-			auto newTitle = std::format(L"{}  --  FPS: {:0.1f}  |  t = {:0.3f} s\n", WINDOW_TITLE, 1.0 / deltaTime, gCurrentTime);
-			SetWindowText(hWnd, newTitle.c_str());
+			{
+				auto newTitle = std::format(L"{} - t: {:0.1f}  |  f: {}  |  FPS = {:0.1f} s\n",
+					WINDOW_TITLE, gCurrentTime, gFrameCount, 1.0 / deltaTime);
+				SetWindowText(hWnd, newTitle.c_str());
+			}
 
 			// Update constant buffer
 			decltype(constantBufferData) newConstantBufferData = { static_cast<float>(gCurrentTime) };
