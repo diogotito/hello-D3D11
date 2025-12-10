@@ -25,8 +25,8 @@ using Microsoft::WRL::ComPtr;
 
 // Constants --------------------------------------------------------------------------------------------------------------------------------------------
 
-constexpr int WIDTH = 600;
-constexpr int HEIGHT = 300;
+constexpr int WIDTH = 650;
+constexpr int HEIGHT = 500;
 constexpr std::wstring_view WINDOW_TITLE = L"My second win32 window: Hello, Direct3D 11!"sv;
 
 // Helpers ----------------------------------------------------------------------------------------------------------------------------------------------
@@ -40,7 +40,7 @@ do { \
 } while(0)
 
 // For win32-style errors
-void DebugLastError() {
+static void DebugLastError() {
 	DWORD errorCode = GetLastError();
 	LPVOID lpMsgBuf = nullptr;
 	FormatMessageW(
@@ -69,38 +69,63 @@ do { \
 // that receive C-style pointers to structs.
 // https://stackoverflow.com/a/47460052
 template<typename T> T& as_lvalue(T&& t) { return t; }
-// (i like trains.)n
+// (i like trains.)
 
 // Counter ----------------------------------------------------------------------------------------------------------------------------------------------
 
-using TimeInSeconds = double;
-TimeInSeconds gCurrentTime = {};
-uint64_t gFrameCount = 0;
+namespace Time
+{
+	using Seconds = double;
 
-static TimeInSeconds Counter() {
-	static LARGE_INTEGER perfFreq = {};
-	if (perfFreq.QuadPart == 0)
-	{
-		if (!QueryPerformanceFrequency(&perfFreq))
-		{
+	static Seconds getAbsoluteTime() {
+		static LARGE_INTEGER perfFreq = {};
+		if (perfFreq.QuadPart == 0)
+			if (!QueryPerformanceFrequency(&perfFreq))
+				DebugLastError();
+
+		static LARGE_INTEGER perfCount = {};
+		if (!QueryPerformanceCounter(&perfCount))
 			DebugLastError();
+
+		return static_cast<Seconds>(perfCount.QuadPart) / perfFreq.QuadPart;
+	}
+
+	Seconds startTime = {};
+	Seconds currentTime = {};
+	Seconds deltaTime = {};
+	uint64_t frameCount = 0;
+
+	// Called as soon as the window shows up
+	static void startMeasuringDemo() {
+		startTime = getAbsoluteTime();
+	}
+
+	constexpr int FPS_WINDOW_SIZE = 30;
+	Seconds averagedDeltaTime = {};
+	Seconds displayedFPS = {};
+
+	// Updates currentTime, deltaTime, frameCount and displayedFPS
+	static void measureFrame() {
+		double previousTime = currentTime;
+		currentTime = getAbsoluteTime() - startTime;
+		frameCount++;
+		deltaTime = Time::currentTime - previousTime;
+
+		int i = frameCount % FPS_WINDOW_SIZE;
+		if (i == 0)
+		{
+			displayedFPS = 1.0 / averagedDeltaTime;
+		}
+		else
+		{
+			averagedDeltaTime = (averagedDeltaTime * (i - 1.0) + deltaTime) / i;
 		}
 	}
-
-	static LARGE_INTEGER perfCount = {};
-	if (!QueryPerformanceCounter(&perfCount))
-	{
-		DebugLastError();
-	}
-
-	auto dCounter = static_cast<TimeInSeconds>(perfCount.QuadPart),
-		dFrequency = static_cast<TimeInSeconds>(perfFreq.QuadPart);
-	return dCounter / dFrequency;
 }
 
 // Window procedure -------------------------------------------------------------------------------------------------------------------------------------
 
-LRESULT CALLBACK WinProc(HWND hWin, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+static LRESULT CALLBACK WinProc(HWND hWin, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	switch (uMsg)
 	{
 	case WM_KEYDOWN:
@@ -330,7 +355,7 @@ int WINAPI wWinMain(
 
 	// Set up the constant buffers ----------------------------------------------------------------------------------------------------------------------
 
-	auto constantBufferData = std::to_array({ static_cast<float>(gCurrentTime) });
+	auto constantBufferData = std::to_array({ static_cast<float>(Time::currentTime) });
 	UINT appropriateSize = static_cast<UINT>(std::ceil(sizeof(constantBufferData) / 16.f) * 16);
 	LOG(L"constantBufferData: # = {}, sizeof = {}, appropriate size = {}", std::size(constantBufferData), sizeof(constantBufferData), appropriateSize);
 
@@ -374,7 +399,7 @@ int WINAPI wWinMain(
 #pragma region misc "demo" logic setup
 
 	// Start counting time with Performance Counter
-	double startTime = Counter();
+	Time::startMeasuringDemo();
 
 #pragma endregion
 
@@ -399,22 +424,17 @@ int WINAPI wWinMain(
 		{
 			// Update demo state ---------------------------------------------------------------------------------------------------------------------
 
-			double deltaTime = ([=]() {
-				double previousTime = gCurrentTime;
-				gCurrentTime = Counter() - startTime;  // Mutate global current time
-				gFrameCount++;                             // Mutate global frame count
-				return gCurrentTime - previousTime;
-			}());
+			Time::measureFrame(); // Updates Time::currentTime, deltaTime, etc.
 
 			// Update window title with FPS and time
 			{
-				auto newTitle = std::format(L"{} - t: {:0.1f}  |  f: {}  |  FPS = {:0.1f} s\n",
-					WINDOW_TITLE, gCurrentTime, gFrameCount, 1.0 / deltaTime);
+				auto newTitle = std::format(L"{} - t: {:0.2f}  |  f: {}  |  FPS = {:>5.1f}\n",
+					WINDOW_TITLE, Time::currentTime, Time::frameCount, Time::displayedFPS);
 				SetWindowText(hWnd, newTitle.c_str());
 			}
 
 			// Update constant buffer
-			decltype(constantBufferData) newConstantBufferData = { static_cast<float>(gCurrentTime) };
+			decltype(constantBufferData) newConstantBufferData = { static_cast<float>(Time::currentTime) };
 			D3D11_MAPPED_SUBRESOURCE mappedConstants = {};
 			ASSERT_SUCCEEDED(
 				context->Map(constantBuffer.Get(), 0, D3D11_MAP::D3D11_MAP_WRITE_DISCARD, 0, &mappedConstants),
